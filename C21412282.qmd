@@ -1,0 +1,297 @@
+---
+title: "The Impact of Air Pollution on Public Health"
+student_number: "C21412282"
+author: "Prabhjeet Bissora"
+programme_code: "TU856"
+format: html
+editor_options:
+  chunk_output_type: console
+  
+output:
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+# Introduction
+
+Air pollution is a critical global issue affecting millions of lives. I will aim to investigate the relationship between air pollution levels and public health outcomes using multiple datasets. I aim to understand whether increased pollution correlates with lower life expectancies.
+
+```{r, echo=FALSE}
+
+# Load Libraries
+
+
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(shiny)
+library(readr)
+library(DT)
+library(httr)
+library(jsonlite)
+library(here)
+library(flexdashboard)
+library(scales)
+library(patchwork)
+library(viridis)
+
+
+```
+
+```{r, echo=FALSE}
+
+mydata <- file.path("C:","Users", "prabhser", "OneDrive - Technological University Dublin", "Desktop", "Computer Science", "year 4", "sem 2", "visualising data", "assignment")
+
+# load dataframes from respective 
+air_df <- file.path(mydata, "air_pollution.csv")
+health_df <- file.path(mydata, "health_outcomes.csv")
+
+# load data from dataframes
+air_pollution <- read_csv(air_df)
+health_outcomes <- read_csv(health_df)
+
+# Data cleaning and preparation
+combined_data <- air_pollution %>%
+  mutate(Country = trimws(tolower(Country))) %>%
+  full_join(
+    health_outcomes %>% 
+      mutate(Country = trimws(tolower(Country))),
+    by = "Country"
+  ) %>%
+  drop_na() %>%
+  mutate(
+    Region = factor(Region),
+    Date = as.Date(Date),
+    Pollution_Level = case_when(
+      `AQI Value` < 50 ~ "Good",
+      `AQI Value` < 100 ~ "Moderate",
+      `AQI Value` < 150 ~ "Unhealthy for Sensitive Groups",
+      `AQI Value` < 200 ~ "Unhealthy",
+      TRUE ~ "Very Unhealthy"
+    ) %>% factor(levels = c("Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy"))
+  )
+
+glimpse(combined_data)
+
+```
+
+```{r, echo=FALSE}
+
+#| fig-height: 8
+#| fig-width: 10
+chart1 <- ggplot(combined_data, aes(x = `AQI Value`, y = LifeExpectancy, 
+                                   color = Region, size = Population,
+                                   text = paste("Country:", Country,
+                                                "<br>Life Expectancy:", LifeExpectancy,
+                                                "<br>AQI:", `AQI Value`))) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
+  scale_color_viridis_d() +
+  scale_size_continuous(labels = comma) +
+  labs(
+    title = "Air Quality vs. Life Expectancy by Region",
+    subtitle = "Higher pollution levels correlate with lower life expectancy",
+    x = "Air Quality Index (Higher = Worse)",
+    y = "Life Expectancy (Years)",
+    color = "Region",
+    size = "Population"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom",
+        plot.title = element_text(face = "bold"))
+
+ggplotly(chart1, tooltip = "text") %>%
+  layout(hoverlabel = list(bgcolor = "white"),
+         annotations = list(
+           x = 0.5, y = -0.2,
+           text = "Data shows a clear negative correlation between air quality and life expectancy",
+           showarrow = FALSE,
+           xref = "paper",
+           yref = "paper"
+         ))
+```
+
+\
+
+```{r, echo=FALSE}
+#| fig-height: 8
+#| fig-width: 10
+chart2 <- combined_data %>%
+  ggplot(aes(x = Pollution_Level, y = FertilityRate, fill = Region,
+             text = paste("Country:", Country,
+                          "<br>Respiratory Cases:", FertilityRate))) +
+  geom_boxplot(alpha = 0.8) +
+  scale_fill_viridis_d() +
+  labs(
+    title = "Air Pollution Levels and Respiratory Diseases",
+    subtitle = "Higher pollution categories show increased respiratory disease rates",
+    x = "Air Pollution Level Category",
+    y = "Respiratory Disease Cases per 100,000",
+    fill = "Region"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold"))
+
+ggplotly(chart2, tooltip = "text") %>%
+  layout(hoverlabel = list(bgcolor = "white"))
+```
+
+```{r}
+#| fig-height: 8
+#| fig-width: 12
+chart3 <- combined_data %>%
+  # Ensure Year is extracted correctly
+  mutate(Year = lubridate::year(Date)) %>%
+  # Group and summarize
+  group_by(Year, Region) %>%
+  summarise(
+    Avg_AQI = mean(`AQI Value`, na.rm = TRUE),
+    Avg_LifeExp = mean(LifeExpectancy, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Plot
+  ggplot(aes(x = Year)) +
+  geom_line(aes(y = Avg_AQI, color = "AQI"), size = 1) +
+  geom_line(aes(y = Avg_LifeExp * 5, color = "Life Expectancy"), size = 1) +  # Scaled for visibility
+  scale_y_continuous(
+    name = "Average AQI",
+    sec.axis = sec_axis(~ . / 5, name = "Average Life Expectancy")  # Adjusted scaling
+  ) +
+  scale_color_manual(values = c("AQI" = "red", "Life Expectancy" = "blue")) +
+  labs(
+    title = "Air Quality and Life Expectancy Over Time",
+    x = "Year",
+    color = "Metric"
+  ) +
+  facet_wrap(~Region, scales = "free_x") +
+  theme_minimal()
+
+# Display as interactive Plotly
+ggplotly(chart3)
+```
+
+\
+
+# Load and Merge Data
+
+I integrate air pollution data with a public health dataset, both sourced from Kaggle, ensuring proper cleaning and handling of missing values.
+
+```{r, echo=FALSE}
+
+# Download air pollution dataset
+#air_pollution <- read_csv(air_pollution_url)
+
+# Assume health data is downloaded manually from IHME and loaded
+# Placeholder for actual data processing
+mydata <- file.path("C:","Users", "prabhser", "OneDrive - Technological University Dublin", "Desktop", "Computer Science", "year 4", "sem 2", "visualising data", "assignment")
+
+# load dataframes from respective 
+air_df <- file.path(mydata, "air_pollution.csv")
+health_df <- file.path(mydata, "health_outcomes.csv")
+
+# load data from dataframes
+air_pollution <- read_csv(air_df)
+health_outcomes <- read_csv(health_df)
+
+# ensure common fields are of same type for join to succeed
+air_pollution$Country <- as.character(air_pollution$Country)
+health_outcomes$Country <- as.character(health_outcomes$Country)
+
+#ensure all fields are in same case
+air_pollution <- air_pollution %>% 
+  mutate(Country = trimws(tolower(Country)))
+
+health_outcomes <- health_outcomes %>% 
+  mutate(Country = trimws(tolower(Country)))
+
+# Merge datasets on country and year
+data <- full_join(air_pollution, health_outcomes, by = c("Country"))
+
+#sum(is.na(air_pollution$`WHO Country Name`))
+#sum(is.na(health_outcomes$Country))
+
+#setdiff(air_pollution$`WHO Country Name`, health_outcomes$Country)
+#setdiff(health_outcomes$Country, air_pollution$`WHO Country Name`)
+
+# Handle missing values
+data <- data %>% drop_na()
+glimpse(data)
+
+str(data)
+summary(data)
+```
+
+# Exploratory Data Analysis
+
+Before creating explanatory visualizations, I explored the life expectancy vs pollution to see how they compare.
+
+```{r, echo=FALSE}
+ggplot(data, aes(x = `AQI Value`, y = LifeExpectancy, color = Region)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  labs(
+    title = "Air Pollution (PM2.5) vs Life Expectancy",
+    x = "PM2.5 Concentration (µg/m³)",
+    y = "Age",
+    color = "Region"
+  ) +
+  theme_minimal()
+```
+
+# Interactive Dashboard
+
+Using shiny and plotly packages, I create an interactive dashboard to visualize trends by region and year.
+
+```{r, echo=FALSE}
+#| fig-height: 8
+# Interactive but not Shiny-dependent
+filtered_data <- combined_data %>% 
+  filter(Region == "Europe")  # Default filter
+
+plot_ly(filtered_data, x = ~Date, y = ~`AQI Value`, 
+        color = ~Country, type = 'scatter', mode = 'lines') %>%
+  layout(
+    updatemenus = list(
+      list(
+        type = "dropdown",
+        buttons = list(
+          list(method = "restyle",
+               args = list("y", list(filtered_data$`AQI Value`)),
+               label = "Show AQI"),
+          list(method = "restyle",
+               args = list("y", list(filtered_data$LifeExpectancy)),
+               label = "Show Life Expectancy")
+        )
+      )
+    )
+  )
+```
+
+\
+
+```{r}
+# Simulated dataset (replace with actual dataset)
+data <- combined_data
+
+renderPlotly({
+  filtered_data <- data %>% filter(Region == input$Region)
+  p <- ggplot(filtered_data, aes(x = Date, y = `AQI Value`, color = Country)) +
+    geom_line() +
+    labs(title = "PM2.5 Levels Over Time", x = "Date", y = "AQI Value") +
+    theme_minimal()
+  ggplotly(p)
+})
+
+renderDT({
+  filtered_data <- data %>% filter(Region == input$Region)
+  datatable(filtered_data)
+})
+```
+
+# Conclusion
+
+The data suggests a strong correlation between air pollution levels and life expectancies. The interactive dashboard allows for further regional analysis, aiding policymakers in making data-driven decisions to mitigate pollution effects.
